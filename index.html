@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>arXiv Research Summarizer</title>
+    <link rel="stylesheet" href="static/style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1><i class="fas fa-book-open"></i> arXiv Research Summarizer</h1>
+                <p>AI-powered research paper analysis and automation tools</p>
+            </div>
+            <div class="status-indicators">
+                <div class="status-item">
+                    <span class="status-label">Ollama:</span>
+                    <span id="ollama-status" class="status offline">Checking...</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">arXiv:</span>
+                    <span id="arxiv-status" class="status online">Online</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Model Selection -->
+            <section class="model-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-robot"></i> Model Configuration</h2>
+                </div>
+                <div class="model-controls">
+                    <div class="model-selector">
+                        <label for="model-select">Select Model:</label>
+                        <select id="model-select" class="model-dropdown">
+                            <option value="">Loading models...</option>
+                        </select>
+                        <span id="current-model" class="current-model"></span>
+                    </div>
+                    <div class="model-info" id="model-info">
+                        <p>Select a model to see details</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Search Interface -->
+            <section class="search-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-search"></i> Research Query</h2>
+                </div>
+                <div class="search-controls">
+                    <div class="input-group">
+                        <input type="text" id="search-query" placeholder="Enter research topic (e.g., 'machine learning transformers')" class="search-input">
+                        <div class="input-append">
+                            <select id="max-results" class="results-dropdown">
+                                <option value="3">3 papers</option>
+                                <option value="5" selected>5 papers</option>
+                                <option value="10">10 papers</option>
+                                <option value="15">15 papers</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="search-buttons">
+                        <button id="search-btn" class="btn btn-primary">
+                            <i class="fas fa-search"></i> Search Papers
+                        </button>
+                        <button id="summarize-btn" class="btn btn-success">
+                            <i class="fas fa-file-alt"></i> Summarize
+                        </button>
+                        <button id="compare-btn" class="btn btn-warning">
+                            <i class="fas fa-balance-scale"></i> Compare
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Automation Tools -->
+            <section class="automation-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-magic"></i> Automation Tools</h2>
+                </div>
+                <div class="automation-grid">
+                    <div class="automation-card" data-type="literature_review">
+                        <div class="automation-icon">
+                            <i class="fas fa-book"></i>
+                        </div>
+                        <h3>Literature Review</h3>
+                        <p>Comprehensive analysis with summary, comparison, and gap analysis</p>
+                        <button class="btn btn-outline run-automation">Run</button>
+                    </div>
+                    
+                    <div class="automation-card" data-type="research_gap_analysis">
+                        <div class="automation-icon">
+                            <i class="fas fa-search-minus"></i>
+                        </div>
+                        <h3>Gap Analysis</h3>
+                        <p>Identify research gaps and opportunities</p>
+                        <button class="btn btn-outline run-automation">Run</button>
+                    </div>
+                    
+                    <div class="automation-card" data-type="methodology_comparison">
+                        <div class="automation-icon">
+                            <i class="fas fa-flask"></i>
+                        </div>
+                        <h3>Methodology Comparison</h3>
+                        <p>Detailed comparison of research methods</p>
+                        <button class="btn btn-outline run-automation">Run</button>
+                    </div>
+                    
+                    <div class="automation-card" data-type="trend_analysis">
+                        <div class="automation-icon">
+                            <i class="fas fa-chart-line"></i>
+                        </div>
+                        <h3>Trend Analysis</h3>
+                        <p>Analyze research trends and future directions</p>
+                        <button class="btn btn-outline run-automation">Run</button>
+                    </div>
+                </div>
+
+                <!-- Custom Automation -->
+                <div class="custom-automation">
+                    <h4><i class="fas fa-cogs"></i> Custom Analysis</h4>
+                    <textarea id="custom-instructions" placeholder="Enter custom analysis instructions..." class="custom-input"></textarea>
+                    <button id="run-custom" class="btn btn-info">
+                        <i class="fas fa-play"></i> Run Custom Analysis
+                    </button>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-chart-bar"></i> Results</h2>
+                    <div class="result-controls">
+                        <button id="clear-results" class="btn btn-outline">
+                            <i class="fas fa-trash"></i> Clear
+                        </button>
+                        <button id="export-results" class="btn btn-outline">
+                            <i class="fas fa-download"></i> Export
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Progress Indicator -->
+                <div id="progress-section" class="progress-section hidden">
+                    <div class="progress-header">
+                        <h4 id="progress-title">Processing...</h4>
+                        <span id="progress-close" class="progress-close">&times;</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                    <div id="progress-text" class="progress-text">Initializing...</div>
+                </div>
+
+                <!-- Results Tabs -->
+                <div class="results-tabs">
+                    <div class="tab-buttons">
+                        <button class="tab-btn active" data-tab="papers">Papers</button>
+                        <button class="tab-btn" data-tab="summary">Summary</button>
+                        <button class="tab-btn" data-tab="comparison">Comparison</button>
+                        <button class="tab-btn" data-tab="automation">Automation</button>
+                        <button class="tab-btn" data-tab="saved">Saved</button>
+                    </div>
+
+                    <div class="tab-content">
+                        <!-- Papers Tab -->
+                        <div id="papers-tab" class="tab-pane active">
+                            <div id="papers-list" class="papers-list">
+                                <div class="empty-state">
+                                    <i class="fas fa-search"></i>
+                                    <p>Search for papers to see results</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Summary Tab -->
+                        <div id="summary-tab" class="tab-pane">
+                            <div id="summary-content" class="content-box">
+                                <div class="empty-state">
+                                    <i class="fas fa-file-alt"></i>
+                                    <p>Generate a summary to see results</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Comparison Tab -->
+                        <div id="comparison-tab" class="tab-pane">
+                            <div id="comparison-content">
+                                <div class="empty-state">
+                                    <i class="fas fa-balance-scale"></i>
+                                    <p>Generate a comparison to see results</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Automation Tab -->
+                        <div id="automation-tab" class="tab-pane">
+                            <div id="automation-content">
+                                <div class="empty-state">
+                                    <i class="fas fa-magic"></i>
+                                    <p>Run an automation workflow to see results</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Saved Tab -->
+                        <div id="saved-tab" class="tab-pane">
+                            <div class="saved-section">
+                                <h4>Saved Summaries</h4>
+                                <div id="saved-summaries" class="saved-list"></div>
+                            </div>
+                            <div class="saved-section">
+                                <h4>Saved Comparisons</h4>
+                                <div id="saved-comparisons" class="saved-list"></div>
+                            </div>
+                            <div class="saved-section">
+                                <h4>Saved Workflows</h4>
+                                <div id="saved-workflows" class="saved-list"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>&copy; 2024 arXiv Research Summarizer. Powered by Ollama & FastAPI.</p>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="static/script.js"></script>
+</body>
+</html>
