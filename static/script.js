@@ -1,8 +1,9 @@
 class ArxivSummarizer {
     constructor() {
-        this.baseUrl = "http://localhost:8000";
+        this.baseUrl = window.location.origin;
         this.currentWorkflowId = null;
         this.workflowCheckInterval = null;
+        this.availableTools = [];
         this.init();
     }
 
@@ -10,6 +11,7 @@ class ArxivSummarizer {
         this.bindEvents();
         this.checkHealth();
         this.loadModels();
+        this.loadTools();
         this.loadSavedItems();
     }
 
@@ -33,6 +35,9 @@ class ArxivSummarizer {
         
         document.getElementById('run-custom').addEventListener('click', () => this.runCustomAutomation());
         
+        // Tool buttons
+        document.getElementById('run-tool').addEventListener('click', () => this.executeTool());
+        
         // Tab navigation
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', (e) => this.switchTab(e.target.dataset.tab));
@@ -49,6 +54,9 @@ class ArxivSummarizer {
         document.getElementById('search-query').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.searchPapers();
         });
+        
+        // Tool selection
+        document.getElementById('tool-select').addEventListener('change', (e) => this.updateToolParameters(e.target.value));
     }
 
     async checkHealth() {
@@ -93,6 +101,119 @@ class ArxivSummarizer {
         } catch (error) {
             console.error('Failed to load models:', error);
         }
+    }
+
+    async loadTools() {
+        try {
+            const response = await fetch(`${this.baseUrl}/api/tools`);
+            const data = await response.json();
+            
+            if (data.success) {
+                this.availableTools = data.tools;
+                this.populateToolSelector();
+            }
+        } catch (error) {
+            console.error('Failed to load tools:', error);
+        }
+    }
+
+    populateToolSelector() {
+        const select = document.getElementById('tool-select');
+        select.innerHTML = '<option value="">Select a tool...</option>';
+        
+        // Group tools by category
+        const toolsByCategory = {};
+        this.availableTools.forEach(tool => {
+            if (!toolsByCategory[tool.category]) {
+                toolsByCategory[tool.category] = [];
+            }
+            toolsByCategory[tool.category].push(tool);
+        });
+        
+        // Populate dropdown with categories
+        Object.keys(toolsByCategory).forEach(category => {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = category.toUpperCase();
+            
+            toolsByCategory[category].forEach(tool => {
+                const option = document.createElement('option');
+                option.value = tool.name;
+                option.textContent = `${tool.name} - ${tool.description}`;
+                optgroup.appendChild(option);
+            });
+            
+            select.appendChild(optgroup);
+        });
+    }
+
+    updateToolParameters(toolName) {
+        const paramsContainer = document.getElementById('tool-parameters');
+        paramsContainer.innerHTML = '';
+        
+        if (!toolName) return;
+        
+        const tool = this.availableTools.find(t => t.name === toolName);
+        if (!tool) return;
+        
+        // Common parameters
+        const commonParams = `
+            <div class="parameter-group">
+                <label for="tool-query">Research Query:</label>
+                <input type="text" id="tool-query" class="parameter-input" placeholder="Enter research topic" value="${document.getElementById('search-query').value}">
+            </div>
+            <div class="parameter-group">
+                <label for="tool-max-results">Max Results:</label>
+                <select id="tool-max-results" class="parameter-select">
+                    <option value="3">3 papers</option>
+                    <option value="5" selected>5 papers</option>
+                    <option value="10">10 papers</option>
+                    <option value="15">15 papers</option>
+                </select>
+            </div>
+            <div class="parameter-group">
+                <label for="tool-model">Model:</label>
+                <select id="tool-model" class="parameter-select">
+                    ${document.getElementById('model-select').innerHTML}
+                </select>
+            </div>
+        `;
+        
+        paramsContainer.innerHTML = commonParams;
+        
+        // Tool-specific parameters
+        if (toolName === 'batch_analyze') {
+            paramsContainer.innerHTML += `
+                <div class="parameter-group">
+                    <label>Analyses to Run:</label>
+                    <div class="checkbox-group">
+                        <label><input type="checkbox" name="analyses" value="summary" checked> Summary</label>
+                        <label><input type="checkbox" name="analyses" value="comparison" checked> Comparison</label>
+                        <label><input type="checkbox" name="analyses" value="gap_analysis"> Gap Analysis</label>
+                        <label><input type="checkbox" name="analyses" value="trend_analysis"> Trend Analysis</label>
+                    </div>
+                </div>
+            `;
+        } else if (toolName === 'execute_workflow') {
+            paramsContainer.innerHTML += `
+                <div class="parameter-group">
+                    <label for="workflow-type">Workflow Type:</label>
+                    <select id="workflow-type" class="parameter-select">
+                        <option value="literature_review">Literature Review</option>
+                        <option value="research_gap_analysis">Research Gap Analysis</option>
+                        <option value="methodology_comparison">Methodology Comparison</option>
+                        <option value="trend_analysis">Trend Analysis</option>
+                        <option value="custom_workflow">Custom Workflow</option>
+                    </select>
+                </div>
+                <div class="parameter-group">
+                    <label for="custom-instructions-tool">Custom Instructions (optional):</label>
+                    <textarea id="custom-instructions-tool" class="parameter-textarea" placeholder="Enter custom instructions for workflow..."></textarea>
+                </div>
+            `;
+        }
+        
+        // Set current model
+        document.getElementById('tool-model').value = document.getElementById('model-select').value;
     }
 
     updateModelInfo(modelName, models) {
@@ -267,6 +388,66 @@ class ArxivSummarizer {
             console.error('Comparison failed:', error);
             this.hideProgress();
             this.showNotification('Comparison failed. Please try again.', 'error');
+        }
+    }
+
+    async executeTool() {
+        const toolName = document.getElementById('tool-select').value;
+        
+        if (!toolName) {
+            this.showNotification('Please select a tool', 'warning');
+            return;
+        }
+
+        const query = document.getElementById('tool-query').value.trim();
+        if (!query) {
+            this.showNotification('Please enter a research query', 'warning');
+            return;
+        }
+
+        this.showProgress(`Executing ${toolName}...`, 0, 1);
+
+        try {
+            const requestBody = {
+                query: query,
+                max_results: parseInt(document.getElementById('tool-max-results').value),
+                model: document.getElementById('tool-model').value
+            };
+
+            // Add tool-specific parameters
+            if (toolName === 'batch_analyze') {
+                const analyses = Array.from(document.querySelectorAll('input[name="analyses"]:checked'))
+                    .map(checkbox => checkbox.value);
+                requestBody.analyses = analyses;
+            } else if (toolName === 'execute_workflow') {
+                requestBody.workflow_type = document.getElementById('workflow-type').value;
+                const customInstructions = document.getElementById('custom-instructions-tool').value.trim();
+                if (customInstructions) {
+                    requestBody.custom_instructions = customInstructions;
+                }
+            }
+
+            const response = await fetch(`${this.baseUrl}/api/tools/${toolName}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            const data = await response.json();
+            this.hideProgress();
+
+            if (data.success) {
+                this.displayToolResults(toolName, data);
+                this.switchTab('tools');
+                this.showNotification(`Tool ${toolName} executed successfully in ${data.execution_time}s`, 'success');
+            } else {
+                this.showNotification(`Tool execution failed: ${data.message}`, 'error');
+            }
+
+        } catch (error) {
+            console.error('Tool execution failed:', error);
+            this.hideProgress();
+            this.showNotification('Tool execution failed. Please try again.', 'error');
         }
     }
 
@@ -492,6 +673,181 @@ class ArxivSummarizer {
                 </div>
             `;
         }
+    }
+
+    displayToolResults(toolName, data) {
+        const container = document.getElementById('tools-content');
+        let html = `
+            <div class="tool-result fade-in">
+                <div class="tool-header">
+                    <h3><i class="fas fa-toolbox"></i> ${toolName}</h3>
+                    <div class="tool-meta">
+                        <span class="execution-time">Execution time: ${data.execution_time}s</span>
+                        <span class="tool-status ${data.success ? 'success' : 'error'}">${data.success ? 'Success' : 'Failed'}</span>
+                    </div>
+                </div>
+                <div class="tool-message">${data.message}</div>
+        `;
+
+        if (data.success && data.data) {
+            html += this.renderToolData(toolName, data.data);
+        }
+
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    renderToolData(toolName, data) {
+        switch (toolName) {
+            case 'search_papers':
+                return this.renderSearchResults(data);
+            case 'summarize_papers':
+                return this.renderSummaryResults(data);
+            case 'compare_papers':
+                return this.renderComparisonResults(data);
+            case 'analyze_research_gaps':
+                return this.renderGapAnalysisResults(data);
+            case 'analyze_trends':
+                return this.renderTrendAnalysisResults(data);
+            case 'batch_analyze':
+                return this.renderBatchAnalysisResults(data);
+            case 'execute_workflow':
+                return this.renderWorkflowResults(data);
+            default:
+                return `<pre class="data-json">${JSON.stringify(data, null, 2)}</pre>`;
+        }
+    }
+
+    renderSearchResults(data) {
+        return `
+            <div class="search-results">
+                <h4>Found ${data.total_results} papers for "${data.query}"</h4>
+                <div class="papers-list">
+                    ${data.papers.map(paper => `
+                        <div class="paper-card">
+                            <h4 class="paper-title">${this.escapeHtml(paper.title)}</h4>
+                            <div class="paper-authors">By: ${paper.authors.join(', ')}</div>
+                            <div class="paper-abstract">${this.escapeHtml(paper.summary)}</div>
+                            <a href="${paper.link}" target="_blank" class="paper-link">
+                                <i class="fas fa-external-link-alt"></i> View on arXiv
+                            </a>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    renderSummaryResults(data) {
+        return `
+            <div class="summary-results">
+                <div class="result-meta">
+                    <strong>Papers used:</strong> ${data.papers_used} | 
+                    <strong>Model:</strong> ${data.model}
+                </div>
+                <div class="content-box">${this.formatText(data.summary)}</div>
+            </div>
+        `;
+    }
+
+    renderComparisonResults(data) {
+        if (data.comparison && data.comparison.comparison_table) {
+            return `
+                <div class="comparison-results">
+                    <div class="result-meta">
+                        <strong>Papers compared:</strong> ${data.papers_compared} | 
+                        <strong>Model:</strong> ${data.model}
+                    </div>
+                    <table class="comparison-table">
+                        <thead>
+                            <tr>
+                                <th>Paper Title</th>
+                                <th>Research Focus</th>
+                                <th>Methodology</th>
+                                <th>Tools & Techniques</th>
+                                <th>Advantages</th>
+                                <th>Limitations</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.comparison.comparison_table.map(item => `
+                                <tr>
+                                    <td><strong>${this.escapeHtml(item.paper_title)}</strong></td>
+                                    <td>${this.escapeHtml(item.research_focus)}</td>
+                                    <td>${this.escapeHtml(item.methodology)}</td>
+                                    <td>${this.escapeHtml(item.tools_techniques)}</td>
+                                    <td>${this.escapeHtml(item.advantages)}</td>
+                                    <td>${this.escapeHtml(item.limitations)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+        return `<pre class="data-json">${JSON.stringify(data, null, 2)}</pre>`;
+    }
+
+    renderGapAnalysisResults(data) {
+        return `
+            <div class="gap-analysis-results">
+                <div class="result-meta">
+                    <strong>Papers analyzed:</strong> ${data.papers_analyzed} | 
+                    <strong>Model:</strong> ${data.model}
+                </div>
+                <div class="content-box">${this.formatText(data.gap_analysis)}</div>
+            </div>
+        `;
+    }
+
+    renderTrendAnalysisResults(data) {
+        return `
+            <div class="trend-analysis-results">
+                <div class="result-meta">
+                    <strong>Papers analyzed:</strong> ${data.papers_analyzed} | 
+                    <strong>Model:</strong> ${data.model}
+                </div>
+                <div class="content-box">${this.formatText(data.trend_analysis)}</div>
+            </div>
+        `;
+    }
+
+    renderBatchAnalysisResults(data) {
+        let html = `
+            <div class="batch-analysis-results">
+                <div class="result-meta">
+                    <strong>Papers found:</strong> ${data.papers_found} | 
+                    <strong>Analyses run:</strong> ${Object.keys(data.analyses).length}
+                </div>
+        `;
+
+        Object.keys(data.analyses).forEach(analysis => {
+            html += `
+                <div class="analysis-section">
+                    <h4>${analysis.replace('_', ' ').toUpperCase()}</h4>
+                    <div class="content-box">${this.formatText(data.analyses[analysis])}</div>
+                </div>
+            `;
+        });
+
+        html += '</div>';
+        return html;
+    }
+
+    renderWorkflowResults(data) {
+        return `
+            <div class="workflow-results">
+                <div class="result-meta">
+                    <strong>Workflow ID:</strong> ${data.workflow_id} | 
+                    <strong>Type:</strong> ${data.workflow_type} | 
+                    <strong>Status:</strong> ${data.status}
+                </div>
+                <div class="content-box">
+                    <p>Workflow started successfully. Use the Automation tab to monitor progress.</p>
+                    <p><strong>Query:</strong> ${data.query}</p>
+                </div>
+            </div>
+        `;
     }
 
     displayAutomationResults(results) {
@@ -727,6 +1083,13 @@ class ArxivSummarizer {
                 <div class="empty-state">
                     <i class="fas fa-magic"></i>
                     <p>Run an automation workflow to see results</p>
+                </div>
+            `;
+            
+            document.getElementById('tools-content').innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-toolbox"></i>
+                    <p>Execute a tool to see results</p>
                 </div>
             `;
             
