@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Callable
 import requests
 import xml.etree.ElementTree as ET
 import ollama
@@ -14,6 +14,7 @@ from datetime import datetime
 import json
 import uuid
 from enum import Enum
+from functools import wraps
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,7 +39,7 @@ os.makedirs("summaries", exist_ok=True)
 os.makedirs("comparisons", exist_ok=True)
 os.makedirs("workflows", exist_ok=True)
 
-# Models
+# Models (keep all your existing models)
 class SearchRequest(BaseModel):
     query: str
     max_results: int = 5
@@ -128,6 +129,80 @@ class WorkflowStatus(BaseModel):
     created_at: str
     updated_at: str
 
+class ToolResponse(BaseModel):
+    success: bool
+    data: Optional[Any] = None
+    message: str
+    tool_name: str
+    execution_time: Optional[float] = None
+
+# Tool Decorator
+def tool(name: str = None, description: str = None, category: str = "general"):
+    """
+    Decorator to mark functions as tools with metadata
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            start_time = datetime.now()
+            try:
+                result = await func(*args, **kwargs)
+                execution_time = (datetime.now() - start_time).total_seconds()
+                
+                if isinstance(result, dict) and 'success' in result:
+                    return result
+                
+                return ToolResponse(
+                    success=True,
+                    data=result,
+                    message=f"Tool {name or func.__name__} executed successfully",
+                    tool_name=name or func.__name__,
+                    execution_time=execution_time
+                )
+                
+            except Exception as e:
+                execution_time = (datetime.now() - start_time).total_seconds()
+                logger.error(f"Tool {name or func.__name__} failed: {e}")
+                return ToolResponse(
+                    success=False,
+                    data=None,
+                    message=f"Tool {name or func.__name__} failed: {str(e)}",
+                    tool_name=name or func.__name__,
+                    execution_time=execution_time
+                )
+        
+        # Add tool metadata
+        wrapper._is_tool = True
+        wrapper._tool_name = name or func.__name__
+        wrapper._tool_description = description or func.__doc__
+        wrapper._tool_category = category
+        
+        return wrapper
+    return decorator
+
+# Tool Registry
+class ToolRegistry:
+    def __init__(self):
+        self.tools = {}
+    
+    def register(self, func):
+        self.tools[func._tool_name] = {
+            'function': func,
+            'name': func._tool_name,
+            'description': func._tool_description,
+            'category': func._tool_category
+        }
+        return func
+    
+    def get_tool(self, name):
+        return self.tools.get(name)
+    
+    def list_tools(self):
+        return list(self.tools.values())
+
+# Create tool registry
+tool_registry = ToolRegistry()
+
 # Configuration
 CUSTOM_HOST = "http://10.9.0.5:11434"
 client = ollama.Client(host=CUSTOM_HOST)
@@ -157,27 +232,32 @@ AUTOMATION_WORKFLOWS = {
     AutomationType.LITERATURE_REVIEW: {
         "name": "Literature Review",
         "description": "Comprehensive analysis of research papers including summary, comparison, and key findings",
-        "steps": ["search", "summarize", "compare", "synthesize"]
+        "steps": ["search", "summarize", "compare", "synthesize"],
+        "category": "analysis"
     },
     AutomationType.RESEARCH_GAP_ANALYSIS: {
         "name": "Research Gap Analysis",
         "description": "Identify gaps and opportunities in current research",
-        "steps": ["search", "compare", "gap_analysis"]
+        "steps": ["search", "compare", "gap_analysis"],
+        "category": "analysis"
     },
     AutomationType.METHODOLOGY_COMPARISON: {
         "name": "Methodology Comparison", 
         "description": "Detailed comparison of research methods and approaches",
-        "steps": ["search", "methodology_analysis", "compare"]
+        "steps": ["search", "methodology_analysis", "compare"],
+        "category": "comparison"
     },
     AutomationType.TREND_ANALYSIS: {
         "name": "Trend Analysis",
         "description": "Analyze research trends and emerging topics",
-        "steps": ["search", "trend_analysis", "future_directions"]
+        "steps": ["search", "trend_analysis", "future_directions"],
+        "category": "analysis"
     },
     AutomationType.CUSTOM_WORKFLOW: {
         "name": "Custom Workflow",
         "description": "Custom analysis based on user instructions",
-        "steps": ["search", "custom_analysis"]
+        "steps": ["search", "custom_analysis"],
+        "category": "custom"
     }
 }
 
@@ -690,7 +770,178 @@ class ArxivSummarizer:
 # Initialize the summarizer
 summarizer = ArxivSummarizer(client)
 
-# Existing endpoints (keep all your existing endpoints as they are)
+# Tool Definitions with @tool decorator
+@tool(name="search_papers", description="Search arXiv for research papers on a given topic", category="search")
+async def search_papers_tool(query: str, max_results: int = 5):
+    """Search arXiv for papers on a given topic"""
+    papers = summarizer.search_arxiv(query, max_results)
+    return {
+        "papers": [paper.dict() for paper in papers],
+        "total_results": len(papers),
+        "query": query
+    }
+
+@tool(name="summarize_papers", description="Search and summarize arXiv papers using AI", category="analysis")
+async def summarize_papers_tool(query: str, max_results: int = 5, model: str = None):
+    """Search and summarize arXiv papers"""
+    if model is None:
+        model = summarizer.current_model
+    
+    papers = summarizer.search_arxiv(query, max_results)
+    if not papers:
+        return {"error": "No papers found for the given query"}
+    
+    summary = await summarizer.summarize_with_ollama(papers, model)
+    saved_path = summarizer.save_summary(query, summary)
+    
+    return {
+        "summary": summary,
+        "papers_used": len(papers),
+        "model": model,
+        "query": query,
+        "saved_path": saved_path
+    }
+
+@tool(name="compare_papers", description="Compare research papers and generate structured analysis", category="comparison")
+async def compare_papers_tool(query: str, max_results: int = 5, model: str = None):
+    """Compare research papers and generate structured analysis"""
+    if model is None:
+        model = summarizer.current_model
+    
+    papers = summarizer.search_arxiv(query, max_results)
+    if not papers:
+        return {"error": "No papers found for the given query"}
+    
+    comparison = await summarizer.compare_papers_with_ollama(papers, model)
+    saved_path = summarizer.save_comparison(query, comparison)
+    
+    return {
+        "comparison": comparison,
+        "papers_compared": len(papers),
+        "model": model,
+        "query": query,
+        "saved_path": saved_path
+    }
+
+@tool(name="analyze_research_gaps", description="Identify research gaps and opportunities in papers", category="analysis")
+async def analyze_gaps_tool(query: str, max_results: int = 5, model: str = None):
+    """Analyze research gaps in papers"""
+    if model is None:
+        model = summarizer.current_model
+    
+    papers = summarizer.search_arxiv(query, max_results)
+    if not papers:
+        return {"error": "No papers found for the given query"}
+    
+    gap_analysis = await summarizer.analyze_research_gaps(papers, model)
+    
+    return {
+        "gap_analysis": gap_analysis,
+        "papers_analyzed": len(papers),
+        "model": model,
+        "query": query
+    }
+
+@tool(name="analyze_trends", description="Analyze research trends and future directions", category="analysis")
+async def analyze_trends_tool(query: str, max_results: int = 5, model: str = None):
+    """Analyze research trends in papers"""
+    if model is None:
+        model = summarizer.current_model
+    
+    papers = summarizer.search_arxiv(query, max_results)
+    if not papers:
+        return {"error": "No papers found for the given query"}
+    
+    trend_analysis = await summarizer.analyze_trends(papers, model)
+    
+    return {
+        "trend_analysis": trend_analysis,
+        "papers_analyzed": len(papers),
+        "model": model,
+        "query": query
+    }
+
+@tool(name="execute_workflow", description="Execute a predefined automation workflow", category="automation")
+async def execute_workflow_tool(
+    query: str, 
+    workflow_type: AutomationType, 
+    max_results: int = 10, 
+    model: str = None,
+    custom_instructions: str = None
+):
+    """Execute a predefined automation workflow"""
+    if model is None:
+        model = summarizer.current_model
+    
+    workflow_id = str(uuid.uuid4())[:8]
+    
+    # Create automation request
+    request = AutomationRequest(
+        query=query,
+        automation_type=workflow_type,
+        max_results=max_results,
+        model=model,
+        custom_instructions=custom_instructions
+    )
+    
+    # Start workflow in background
+    asyncio.create_task(summarizer.execute_automation_workflow(request, workflow_id))
+    
+    return {
+        "workflow_id": workflow_id,
+        "status": "started",
+        "workflow_type": workflow_type.value,
+        "query": query
+    }
+
+@tool(name="batch_analyze", description="Run multiple analyses on the same set of papers", category="automation")
+async def batch_analyze_tool(
+    query: str,
+    analyses: List[str],
+    max_results: int = 10,
+    model: str = None
+):
+    """Run multiple analyses on the same set of papers"""
+    if model is None:
+        model = summarizer.current_model
+    
+    papers = summarizer.search_arxiv(query, max_results)
+    if not papers:
+        return {"error": "No papers found for the given query"}
+    
+    results = {
+        "papers_found": len(papers),
+        "query": query,
+        "analyses": {}
+    }
+    
+    for analysis in analyses:
+        if analysis == "summary":
+            results["analyses"]["summary"] = await summarizer.summarize_with_ollama(papers, model)
+        elif analysis == "comparison":
+            results["analyses"]["comparison"] = await summarizer.compare_papers_with_ollama(papers, model)
+        elif analysis == "gap_analysis":
+            results["analyses"]["gap_analysis"] = await summarizer.analyze_research_gaps(papers, model)
+        elif analysis == "trend_analysis":
+            results["analyses"]["trend_analysis"] = await summarizer.analyze_trends(papers, model)
+    
+    return results
+
+# Register all tools
+tools = [
+    search_papers_tool,
+    summarize_papers_tool,
+    compare_papers_tool,
+    analyze_gaps_tool,
+    analyze_trends_tool,
+    execute_workflow_tool,
+    batch_analyze_tool
+]
+
+for tool_func in tools:
+    tool_registry.register(tool_func)
+
+# Existing endpoints (keep all your existing endpoints)
 @app.get("/")
 async def read_index():
     return FileResponse('static/index.html')
@@ -880,7 +1131,43 @@ async def compare_papers(request: SearchRequest):
             error=str(e)
         )
 
-# NEW AUTOMATION ENDPOINTS
+# NEW TOOL-BASED ENDPOINTS
+@app.get("/api/tools")
+async def list_tools():
+    """List all available tools"""
+    tools = tool_registry.list_tools()
+    return {
+        "success": True,
+        "tools": [
+            {
+                "name": tool_info['name'],
+                "description": tool_info['description'],
+                "category": tool_info['category']
+            }
+            for tool_info in tools
+        ]
+    }
+
+@app.post("/api/tools/{tool_name}")
+async def execute_tool(tool_name: str, request: Dict[str, Any]):
+    """Execute a specific tool"""
+    tool_info = tool_registry.get_tool(tool_name)
+    if not tool_info:
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+    
+    try:
+        result = await tool_info['function'](**request)
+        return result
+    except Exception as e:
+        logger.error(f"Tool execution failed: {e}")
+        return ToolResponse(
+            success=False,
+            data=None,
+            message=f"Tool execution failed: {str(e)}",
+            tool_name=tool_name,
+            execution_time=0
+        )
+
 @app.get("/api/automation/workflows")
 async def get_automation_workflows():
     """Get available automation workflows"""
